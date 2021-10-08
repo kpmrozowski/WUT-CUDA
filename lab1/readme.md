@@ -1,4 +1,3 @@
-https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 https://github.com/NVIDIA/cuda-samples/
 
 # Big project example:
