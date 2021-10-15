@@ -79,6 +79,39 @@ __global__ void reduce3(int *in, int *out) {
     }
 } // 210.94us
 
+// bez volatile jest optymalizacja i nie dziala
+__device__ void warpReduce(volatile int *data, int tid) {
+    data[tid] += data[tid + 32];
+    data[tid] += data[tid + 16];
+    data[tid] += data[tid + 8];
+    data[tid] += data[tid + 4];
+    data[tid] += data[tid + 2];
+    data[tid] += data[tid + 1];
+}
+
+__global__ void reduce4(int *in, int *out) {
+    extern __shared__ int shm[]; // pamiec dzielona
+    int tid = threadIdx.x;
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    shm[tid] = in[gid] + in[gid + blockDim.x];
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 32 ; stride /= 2) {
+        if (tid < stride) {
+            shm[tid] += shm[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tid < 32) {
+        warpReduce(shm, tid);
+    }
+
+    if (tid == 0) {
+        out[blockIdx.x] = shm[0];
+    }
+} // 72.192us
+
 int main(int argc, char **argv) {
     const int N = 1 << 20;
     int *h_data = new int[N];
@@ -99,8 +132,8 @@ int main(int argc, char **argv) {
     int num_threads = 1024;
     int num_blocks = N / 1024 / 2;
     int shm_size = num_threads * sizeof(int);
-    reduce3<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
-    reduce3<<<1, num_threads, shm_size>>>(d_out, d_out);
+    reduce4<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    reduce4<<<1, num_threads, shm_size>>>(d_out, d_out);
 
     cudaMemcpy(h_data, d_out, N * sizeof(int), cudaMemcpyDeviceToHost);
 
