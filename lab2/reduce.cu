@@ -60,6 +60,25 @@ __global__ void reduce2(int *in, int *out) {
     }
 } // 208 mic sek
 
+__global__ void reduce3(int *in, int *out) {
+    extern __shared__ int shm[]; // pamiec dzielona
+    int tid = threadIdx.x;
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    shm[tid] = in[gid] + in[gid + blockDim.x];
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 0 ; stride /= 2) {
+        if (tid < stride) {
+            shm[tid] += shm[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        out[blockIdx.x] = shm[0];
+    }
+} // 210.94us
+
 int main(int argc, char **argv) {
     const int N = 1 << 20;
     int *h_data = new int[N];
@@ -78,10 +97,10 @@ int main(int argc, char **argv) {
 
     // reduce ....
     int num_threads = 1024;
-    int num_blocks = N / 1024;
+    int num_blocks = N / 1024 / 2;
     int shm_size = num_threads * sizeof(int);
-    reduce2<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
-    reduce2<<<1, num_threads, shm_size>>>(d_out, d_out);
+    reduce3<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    reduce3<<<1, num_threads, shm_size>>>(d_out, d_out);
 
     cudaMemcpy(h_data, d_out, N * sizeof(int), cudaMemcpyDeviceToHost);
 
