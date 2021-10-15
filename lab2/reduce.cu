@@ -17,7 +17,7 @@ __global__ void reduce0(int *in, int *out) {
     if (tid == 0) {
         out[blockIdx.x] = shm[0];
     }
-}
+} // 208 mic sek
 
 __global__ void reduce1(int *in, int *out) {
     extern __shared__ int shm[]; // pamiec dzielona
@@ -37,7 +37,28 @@ __global__ void reduce1(int *in, int *out) {
     if (tid == 0) {
         out[blockIdx.x] = shm[0];
     }
-}
+} // 208 mic sek
+
+//shared memory jest zorganizowana w 32 banki, w zaleznosci od precyzji moga byc wieksze lub mniejsze. Standardowe maja 32 bity. Konflikty w odczytywaniu tych bankow to Bank Conflicts. Elementy tabeli sa kazdy w innym banku, ale co 32 jest w tym samym, Odczytywanie z tego samego banku to konflikt. 
+
+__global__ void reduce2(int *in, int *out) {
+    extern __shared__ int shm[]; // pamiec dzielona
+    int tid = threadIdx.x;
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    shm[tid] = in[gid];
+    __syncthreads();
+
+    for (unsigned int stride = blockDim.x / 2; stride > 0 ; stride /= 2) {
+        if (tid < stride) {
+            shm[tid] += shm[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        out[blockIdx.x] = shm[0];
+    }
+} // 208 mic sek
 
 int main(int argc, char **argv) {
     const int N = 1 << 20;
@@ -59,8 +80,8 @@ int main(int argc, char **argv) {
     int num_threads = 1024;
     int num_blocks = N / 1024;
     int shm_size = num_threads * sizeof(int);
-    reduce1<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
-    reduce1<<<1, num_threads, shm_size>>>(d_out, d_out);
+    reduce2<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    reduce2<<<1, num_threads, shm_size>>>(d_out, d_out);
 
     cudaMemcpy(h_data, d_out, N * sizeof(int), cudaMemcpyDeviceToHost);
 
