@@ -1,5 +1,8 @@
 #include <iostream>
 
+/** 
+@see https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+*/
 __global__ void reduce0(int *in, int *out) {
     extern __shared__ int shm[]; // pamiec dzielona
     int tid = threadIdx.x;
@@ -79,6 +82,7 @@ __global__ void reduce3(int *in, int *out) {
     }
 } // 210.94us
 
+// 
 // bez volatile jest optymalizacja i nie dziala
 __device__ void warpReduce(volatile int *data, int tid) {
     data[tid] += data[tid + 32];
@@ -112,6 +116,32 @@ __global__ void reduce4(int *in, int *out) {
     }
 } // 72.192us
 
+template <unsigned int blockSize>
+__device__ void warpReduce(volatile int* sdata, int tid) {
+    if (blockSize >= 512) {
+        if (tid < 256) { 
+            sdata[tid] += sdata[tid + 256]; 
+        } __syncthreads(); 
+    }
+    if (blockSize >= 256) {
+        if (tid < 128) { 
+            sdata[tid] += sdata[tid + 128]; 
+        } __syncthreads(); 
+    }
+    if (blockSize >= 128) {
+        if (tid <  64)  { 
+            sdata[tid] += sdata[tid +   64]; 
+        } __syncthreads(); 
+    }
+    if (tid < 32) warpReduce<blockSize>(sdata, tid);
+    if (blockSize >= 64) sdata[tid] += sdata[tid + 32]; 
+    if (blockSize >= 32) sdata[tid] += sdata[tid + 16]; 
+    if (blockSize >= 16) sdata[tid] += sdata[tid +  8]; 
+    if (blockSize >=   8) sdata[tid] += sdata[tid +  4]; 
+    if (blockSize >=   4) sdata[tid] += sdata[tid +  2]; 
+    if (blockSize >=   2) sdata[tid] += sdata[tid +  1];
+}
+
 int main(int argc, char **argv) {
     const int N = 1 << 20;
     int *h_data = new int[N];
@@ -129,7 +159,41 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_in, h_data, N * sizeof(int), cudaMemcpyHostToDevice);
 
     // reduce ....
+    // int reduce_num = 5;
     int num_threads = 1024;
+
+    // switch (reduce_num) {
+    //     case 0: {
+    //         int num_blocks = N / 1024;
+    //         int shm_size = num_threads * sizeof(int);
+    //         reduce0<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    //         reduce0<<<1, num_threads, shm_size>>>(d_out, d_out);
+    //     }
+    //     case 1: {
+    //         int num_blocks = N / 1024;
+    //         int shm_size = num_threads * sizeof(int);
+    //         reduce1<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    //         reduce1<<<1, num_threads, shm_size>>>(d_out, d_out);
+    //     }
+    //     case 2: {
+    //         int num_blocks = N / 1024;
+    //         int shm_size = num_threads * sizeof(int);
+    //         reduce2<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    //         reduce2<<<1, num_threads, shm_size>>>(d_out, d_out);
+    //     }
+    //     case 3: {
+    //         int num_blocks = N / 1024 / 2;
+    //         int shm_size = num_threads * sizeof(int);
+    //         reduce3<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    //         reduce3<<<1, num_threads, shm_size>>>(d_out, d_out);
+    //     }
+    //     case 4: {
+    //         int num_blocks = N / 1024 / 2;
+    //         int shm_size = num_threads * sizeof(int);
+    //         reduce4<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
+    //         reduce4<<<1, num_threads, shm_size>>>(d_out, d_out);
+    //     }
+    // }
     int num_blocks = N / 1024 / 2;
     int shm_size = num_threads * sizeof(int);
     reduce4<<<num_blocks, num_threads, shm_size>>>(d_in, d_out);
